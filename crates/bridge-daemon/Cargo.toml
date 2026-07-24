@@ -1,0 +1,16 @@
+[package]
+name = "bridge-daemon"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+bridge-core = { path = "../bridge-core" }
+channel-protocol = { path = "../channel-protocol" }
+codex-app-server-client = { path = "../codex-app-server-client" }
+serde_json.workspace = true
+tempfile.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true

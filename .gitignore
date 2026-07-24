@@ -1,0 +1,10 @@
+node_modules/
+dist/
+target/
+.env
+config/bridge.toml
+.DS_Store
+data/
+coverage/
+*.log
+.pnpm-store/

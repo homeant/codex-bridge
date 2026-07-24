@@ -1,0 +1,7 @@
+packages:
+  - adapters/*
+
+onlyBuiltDependencies:
+  - protobufjs
+allowBuilds:
+  protobufjs: true
