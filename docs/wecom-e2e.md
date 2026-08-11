@@ -132,7 +132,7 @@ Each adapter has an independent ACL namespace, and the direct-message and group 
 
 - Direct messages are authorized by `allow_all_users` or `allowed_users`.
 - Group messages are authorized by `allow_all_groups` or `allowed_groups`; every member of an authorized group can mention the bot.
-- High-risk App Server requests are approved only by `approval_users`.
+- Tasks initiated by `approval_users` receive trusted instructions not to request approval; high-risk requests from other users can be approved only by `approval_users`.
 
 Adding a group does not grant its members direct-message access, and adding a user does not grant that user access from an unlisted group. A WeCom ID grants no Feishu access and vice versa.
 
@@ -146,9 +146,9 @@ When Codex pauses for interaction, the bot emits a six-character request token. 
 /cancel ABC123
 ```
 
-Only the task initiator can answer normal questions or MCP forms. Only an `approval_users` member can approve or deny Codex's generic final dangerous-action request and any legacy command, file, permission, or connector approval callback. Requests expire after ten minutes unless App Server supplies a shorter auto-resolution interval. Secret-input questions are rejected and never echoed into the group.
+Only the task initiator can answer normal questions or MCP forms. For tasks initiated by an `approval_users` member, the trusted developer instructions tell Codex not to issue a generic final dangerous-action request or pause for human approval. For other initiators, only an `approval_users` member can approve or deny Codex's generic final dangerous-action request and any legacy command, file, permission, or connector approval callback. Requests expire after ten minutes unless App Server supplies a shorter auto-resolution interval. Secret-input questions are rejected and never echoed into the group.
 
-Structured App Server approval callbacks appear as WeCom button cards. The card is visible to the group, but only an `approval_users` click is accepted. An unauthorized click must leave the request pending and show an error only to that user. An authorized click must replace the shared card with the final decision and resume Codex. `/approve TOKEN` and `/deny TOKEN` remain supported for compatibility.
+For tasks initiated by other users, structured App Server approval callbacks appear as WeCom button cards. The card is visible to the group, but only an `approval_users` click is accepted. An unauthorized click must leave the request pending and show an error only to that user. An authorized click must replace the shared card with the final decision and resume Codex. Tasks initiated by `approval_users` should proceed without issuing an approval callback or showing a card. `/approve TOKEN` and `/deny TOKEN` remain supported for compatibility.
 
 ## Conversation routing checks
 

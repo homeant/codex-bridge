@@ -73,6 +73,7 @@ export type ParsedMediaMessage = {
 };
 
 type ApprovalEventFrame = WsFrame<EventMessage>;
+type UnknownRecord = Record<string, unknown>;
 
 export type ParsedApprovalCardEvent = {
   event: MessageEvent;
@@ -154,6 +155,39 @@ export function parseTextMessage(
   };
 }
 
+export function parseMessage(
+  frame: WsFrame<BaseMessage>,
+  expectedBotId: string,
+): ParsedMediaMessage | undefined {
+  const body = frame.body;
+  if (!body) return undefined;
+
+  if (body.msgtype === "text") {
+    const parsed = parseTextMessage(frame as WsFrame<TextMessage>, expectedBotId);
+    return parsed ? { ...parsed, images: [] } : undefined;
+  }
+  if (body.msgtype === "image") {
+    return parseImageMessage(frame as WsFrame<ImageMessage>, expectedBotId);
+  }
+  if (body.msgtype === "mixed") {
+    return parseMixedMessage(frame as WsFrame<MixedMessage>, expectedBotId);
+  }
+
+  const parsed = parseMessageEnvelope(frame, body, expectedBotId);
+  if (!parsed) return undefined;
+  const content = extractReadableText(body);
+  if (!content?.trim()) return undefined;
+
+  return {
+    ...parsed,
+    event: {
+      ...parsed.event,
+      content,
+    },
+    images: [],
+  };
+}
+
 export function parseImageMessage(
   frame: WsFrame<ImageMessage>,
   expectedBotId: string,
@@ -180,7 +214,7 @@ export function parseMixedMessage(
   const parsed = parseMessageEnvelope(frame, body, expectedBotId);
   if (!parsed) return undefined;
   const text = body.mixed.msg_item
-    .flatMap((item) => (item.msgtype === "text" && item.text?.content ? [item.text.content] : []))
+    .flatMap((item) => optionalText(extractReadableText(item)))
     .join("\n")
     .trim();
   const images = body.mixed.msg_item.flatMap((item) =>
@@ -284,15 +318,99 @@ export function parseApprovalCardEvent(
 
 function extractQuotedText(quote: TextMessage["quote"]): string | undefined {
   if (!quote) return undefined;
-  if (quote.text?.content) return quote.text.content;
-  if (quote.voice?.content) return quote.voice.content;
-  if (quote.mixed) {
-    const text = quote.mixed.msg_item
-      .flatMap((item) => (item.text?.content ? [item.text.content] : []))
-      .join("\n");
-    return text || undefined;
+  return extractReadableText(quote);
+}
+
+function extractReadableText(value: unknown): string | undefined {
+  const record = asRecord(value);
+  if (!record) return undefined;
+
+  const directText = firstString(
+    pathString(record, ["text", "content"]),
+    pathString(record, ["voice", "content"]),
+    pathString(record, ["markdown", "content"]),
+    pathString(record, ["content"]),
+  );
+  const nested = [
+    collectMixedText(record),
+    collectForwardedRecordText(record, "chat_record"),
+    collectForwardedRecordText(record, "chatrecord"),
+    collectForwardedRecordText(record, "record"),
+    collectForwardedRecordText(record, "forwarded"),
+  ].filter((part) => part.length > 0);
+  const text = [directText, ...nested].filter(Boolean).join("\n").trim();
+  return text || undefined;
+}
+
+function collectMixedText(record: UnknownRecord): string {
+  const mixed = asRecord(record.mixed);
+  const items = asArray(mixed?.msg_item);
+  if (!items) return "";
+  return items.flatMap((item) => optionalText(extractReadableText(item))).join("\n");
+}
+
+function collectForwardedRecordText(record: UnknownRecord, key: string): string {
+  const forwarded = asRecord(record[key]);
+  if (!forwarded) return "";
+  const title = firstString(
+    stringValue(forwarded.title),
+    stringValue(forwarded.name),
+    stringValue(forwarded.desc),
+  );
+  const items =
+    asArray(forwarded.item) ??
+    asArray(forwarded.items) ??
+    asArray(forwarded.records) ??
+    asArray(forwarded.message_list) ??
+    asArray(forwarded.messages) ??
+    [];
+  const lines = items.flatMap((item) => optionalText(formatForwardedRecordItem(item)));
+  return [title, ...lines].filter(Boolean).join("\n");
+}
+
+function formatForwardedRecordItem(value: unknown): string | undefined {
+  const record = asRecord(value);
+  if (!record) return undefined;
+  const text = extractReadableText(record);
+  if (!text) return undefined;
+  const sender = firstString(
+    pathString(record, ["from", "name"]),
+    pathString(record, ["from", "userid"]),
+    pathString(record, ["sender", "name"]),
+    stringValue(record.sender),
+    stringValue(record.name),
+  );
+  return sender ? `${sender}: ${text}` : text;
+}
+
+function asRecord(value: unknown): UnknownRecord | undefined {
+  return typeof value === "object" && value !== null ? (value as UnknownRecord) : undefined;
+}
+
+function asArray(value: unknown): unknown[] | undefined {
+  return Array.isArray(value) ? value : undefined;
+}
+
+function pathString(record: UnknownRecord, path: string[]): string | undefined {
+  let current: unknown = record;
+  for (const key of path) {
+    const currentRecord = asRecord(current);
+    if (!currentRecord) return undefined;
+    current = currentRecord[key];
   }
-  return undefined;
+  return stringValue(current);
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+function firstString(...values: Array<string | undefined>): string | undefined {
+  return values.find((value) => value !== undefined);
+}
+
+function optionalText(value: string | undefined): string[] {
+  return value ? [value] : [];
 }
 
 export function isStreamExpiredError(error: unknown): boolean {

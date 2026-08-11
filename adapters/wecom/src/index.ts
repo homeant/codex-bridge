@@ -4,16 +4,11 @@ import AiBot, {
   type EventMessage,
   WSAuthFailureError,
   WSReconnectExhaustedError,
-  type ImageMessage,
-  type MixedMessage,
-  type TextMessage,
   type WsFrame,
 } from "@wecom/aibot-node-sdk";
 import {
   parseApprovalCardEvent,
-  parseImageMessage,
-  parseMixedMessage,
-  parseTextMessage,
+  parseMessage,
   ReplyManager,
   type BridgeCommand,
   type ParsedMediaMessage,
@@ -70,18 +65,8 @@ client.on("error", (error) => {
     });
   }
 });
-client.on("message.text", (frame: WsFrame<TextMessage>) => {
-  const parsed = parseTextMessage(frame, botId);
-  if (!parsed) return;
-  replies.register(parsed.event.message_id, parsed.frame, parsed.chatId);
-  emit(parsed.event);
-});
-client.on("message.image", (frame: WsFrame<ImageMessage>) => {
-  const parsed = parseImageMessage(frame, botId);
-  if (parsed) handleMediaMessage(parsed);
-});
-client.on("message.mixed", (frame: WsFrame<MixedMessage>) => {
-  const parsed = parseMixedMessage(frame, botId);
+client.on("message", (frame: WsFrame) => {
+  const parsed = parseMessage(frame, botId);
   if (parsed) handleMediaMessage(parsed);
 });
 

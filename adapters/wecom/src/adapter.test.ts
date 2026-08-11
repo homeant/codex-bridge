@@ -4,6 +4,7 @@ import {
   EventType,
   MessageType,
   type EventMessageWith,
+  type BaseMessage,
   type ImageMessage,
   type MixedMessage,
   type SendMsgBody,
@@ -17,6 +18,7 @@ import {
   isStreamExpiredError,
   parseApprovalCardEvent,
   parseImageMessage,
+  parseMessage,
   parseMixedMessage,
   parseTextMessage,
   ReplyManager,
@@ -71,6 +73,20 @@ const mixedFrame = (overrides: Partial<MixedMessage> = {}): WsFrame<MixedMessage
         },
       ],
     },
+    ...overrides,
+  },
+});
+
+const baseFrame = (overrides: Partial<BaseMessage> = {}): WsFrame<BaseMessage> => ({
+  cmd: "aibot_msg_callback",
+  headers: { req_id: "base-req-1" },
+  body: {
+    msgid: "base-msg-1",
+    aibotid: "bot-1",
+    chatid: "chat-1",
+    chattype: "group",
+    from: { userid: "user-1" },
+    msgtype: "chat_record",
     ...overrides,
   },
 });
@@ -216,6 +232,95 @@ test("parses mixed text and images while preserving quote routing", () => {
   assert.equal(parsed.event.content, "看看这个报错");
   assert.equal(parsed.event.quoted_text, "previous\n\n[Codex任务:R8K3P2Q7W9XZ]");
   assert.equal(parsed.images.length, 1);
+});
+
+test("parses forwarded chat records nested inside mixed messages", () => {
+  const parsed = parseMixedMessage(
+    mixedFrame({
+      mixed: {
+        msg_item: [
+          {
+            msgtype: "text",
+            text: {
+              content:
+                "帮我委托给 019fa17c-595a-76a1-a06d-2b39ad703a13 同事发的是登录邮件模板",
+            },
+          },
+          {
+            msgtype: "chat_record",
+            chat_record: {
+              title: "群聊的聊天记录",
+              item: [
+                {
+                  from: { name: "黄天辉" },
+                  msgtype: "text",
+                  text: { content: "30032 37616 模版发我一下，我改改" },
+                },
+                {
+                  sender: "单轮稿",
+                  msgtype: "text",
+                  text: { content: '[代码消息]<html dir="ltr" lang="en">...' },
+                },
+              ],
+            },
+          },
+        ],
+      },
+    } as Partial<MixedMessage>),
+    "bot-1",
+  );
+  assert.ok(parsed);
+  assert.equal(
+    parsed.event.content,
+    '帮我委托给 019fa17c-595a-76a1-a06d-2b39ad703a13 同事发的是登录邮件模板\n群聊的聊天记录\n黄天辉: 30032 37616 模版发我一下，我改改\n单轮稿: [代码消息]<html dir="ltr" lang="en">...',
+  );
+  assert.deepEqual(parsed.images, []);
+});
+
+test("parses forwarded chat record text from the generic message event", () => {
+  const parsed = parseMessage(
+    baseFrame({
+      chat_record: {
+        title: "群聊的聊天记录",
+        item: [
+          {
+            from: { name: "黄天辉" },
+            msgtype: "text",
+            text: { content: "30032 37616 模版发我一下，我改改" },
+          },
+          {
+            sender: "单轮稿",
+            msgtype: "text",
+            text: { content: '[代码消息]<html dir="ltr" lang="en">...' },
+          },
+        ],
+      },
+      quote: {
+        msgtype: "text",
+        text: { content: "previous\n\n[Codex任务:R8K3P2Q7W9XZ]" },
+      },
+    }),
+    "bot-1",
+  );
+  assert.ok(parsed);
+  assert.equal(parsed.event.chat_type, "group");
+  assert.equal(
+    parsed.event.content,
+    '群聊的聊天记录\n黄天辉: 30032 37616 模版发我一下，我改改\n单轮稿: [代码消息]<html dir="ltr" lang="en">...',
+  );
+  assert.equal(parsed.event.quoted_text, "previous\n\n[Codex任务:R8K3P2Q7W9XZ]");
+  assert.deepEqual(parsed.images, []);
+});
+
+test("ignores opaque unhandled messages without readable text", () => {
+  const parsed = parseMessage(
+    baseFrame({
+      msgtype: "file",
+      file: { url: "https://example.invalid/encrypted", aeskey: "aes-key" },
+    }),
+    "bot-1",
+  );
+  assert.equal(parsed, undefined);
 });
 
 test("parses approval card clicks into existing approval commands", () => {

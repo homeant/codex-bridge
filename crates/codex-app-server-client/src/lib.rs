@@ -1,4 +1,6 @@
-use std::{collections::HashMap, path::Path, process::Stdio, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap, ffi::OsString, path::Path, process::Stdio, sync::Arc, time::Duration,
+};
 
 use serde_json::{Value, json};
 use thiserror::Error;
@@ -90,14 +92,17 @@ impl CodexAppServer {
         model: Option<String>,
         model_provider: Option<String>,
     ) -> Result<Self, AppServerError> {
-        let mut child = Command::new(binary)
-            .args(["app-server", "--listen", "stdio://"])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true)
-            .spawn()
-            .map_err(AppServerError::Spawn)?;
+        Self::spawn_with_model_and_environment(binary, model, model_provider, &[]).await
+    }
+
+    pub async fn spawn_with_model_and_environment(
+        binary: &str,
+        model: Option<String>,
+        model_provider: Option<String>,
+        environment: &[(OsString, OsString)],
+    ) -> Result<Self, AppServerError> {
+        let mut command = app_server_command(binary, environment);
+        let mut child = command.spawn().map_err(AppServerError::Spawn)?;
 
         let stdin = child.stdin.take().ok_or(AppServerError::MissingStdio)?;
         let stdout = child.stdout.take().ok_or(AppServerError::MissingStdio)?;
@@ -320,6 +325,18 @@ impl CodexAppServer {
     async fn request(&self, method: &str, params: Value) -> Result<Value, AppServerError> {
         request_with_parts(&self.writer, &self.pending, &self.next_id, method, params).await
     }
+}
+
+fn app_server_command(binary: &str, environment: &[(OsString, OsString)]) -> Command {
+    let mut command = Command::new(binary);
+    command
+        .args(["app-server", "--listen", "stdio://"])
+        .envs(environment.iter().map(|(key, value)| (key, value)))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    command
 }
 
 fn turn_input(text: &str, image_paths: &[String]) -> Vec<Value> {
@@ -1213,6 +1230,25 @@ fn final_agent_message(params: &Value) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn app_server_command_receives_the_resolved_environment() {
+        let environment = [(
+            OsString::from("MODEL_PROVIDER_TOKEN"),
+            OsString::from("secret-value"),
+        )];
+
+        let command = app_server_command("codex", &environment);
+        let configured_value = command
+            .as_std()
+            .get_envs()
+            .find_map(|(key, value)| {
+                (key == "MODEL_PROVIDER_TOKEN").then(|| value.map(ToOwned::to_owned))
+            })
+            .flatten();
+
+        assert_eq!(configured_value, Some(OsString::from("secret-value")));
+    }
 
     #[test]
     fn thread_params_match_the_app_server_v2_wire_shape() {

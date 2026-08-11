@@ -19,6 +19,8 @@ use tokio::{
 use tracing::{error, info, warn};
 use tracing_subscriber::EnvFilter;
 
+mod shell_env;
+
 struct AdapterProcess {
     name: String,
     child: Child,
@@ -57,10 +59,12 @@ async fn main() -> Result<()> {
             .unwrap_or("<default>"),
         "Codex model selection configured"
     );
-    let codex = CodexAppServer::spawn_with_model(
+    let codex_environment = shell_env::codex_environment().await;
+    let codex = CodexAppServer::spawn_with_model_and_environment(
         &config.codex.binary,
         config.codex.model.clone(),
         config.codex.model_provider.clone(),
+        &codex_environment,
     )
     .await?;
     if cli.check {

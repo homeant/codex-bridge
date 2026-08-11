@@ -65,7 +65,7 @@ Each configured project has a stable ID, display name, description, and absolute
 - Restrict App Server runtime workspace roots to configured canonical directories.
 - Fail closed when the project catalog is empty, contains duplicate IDs, or contains a path outside the configured allowed roots.
 - Apply user ACLs to direct messages and group ACLs to group messages before starting Codex work. Every member of an authorized group may mention the bot, without gaining direct-message access.
-- Restrict command, file, permission, and connector approvals to the current adapter's `approval_users`; normal group access does not imply approval authority.
+- In trusted developer instructions, tell Codex not to request or pause for approval when the originating requester belongs to the current adapter's `approval_users`; otherwise restrict command, file, permission, connector, and explicit high-risk approval decisions to those users. Normal group access does not imply approval authority.
 - Restrict project catalog mutations to the current adapter's `approval_users`; normal catalog visibility or project access does not imply catalog administration authority.
 - Accept clarification and MCP form answers only from the user who started the active turn.
 - Reject secret-input prompts instead of collecting credentials through IM.
