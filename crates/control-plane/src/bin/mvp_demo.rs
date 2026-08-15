@@ -694,11 +694,11 @@ fn response(status: u16, content_type: &str, body: Vec<u8>) -> Vec<u8> {
 }
 
 const INDEX_HTML: &str = r#"<!doctype html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Enterprise AI Collaboration MVP</title>
+  <title>企业 AI 协作 MVP 演示台</title>
   <style>
     :root {
       color-scheme: light;
@@ -708,6 +708,7 @@ const INDEX_HTML: &str = r#"<!doctype html>
       --muted: #667085;
       --line: #d8dde5;
       --blue: #2563eb;
+      --teal: #0f766e;
       --green: #16834a;
       --red: #c2410c;
       --amber: #b7791f;
@@ -735,9 +736,10 @@ const INDEX_HTML: &str = r#"<!doctype html>
     }
     h1 {
       margin: 0;
-      font-size: 20px;
+      font-size: 22px;
       font-weight: 650;
     }
+    p { margin: 0; }
     main {
       display: grid;
       grid-template-columns: 320px minmax(0, 1fr);
@@ -756,6 +758,32 @@ const INDEX_HTML: &str = r#"<!doctype html>
       top: 74px;
     }
     .stack { display: grid; gap: 14px; }
+    .eyebrow {
+      color: var(--teal);
+      font-size: 12px;
+      font-weight: 700;
+      margin-bottom: 4px;
+    }
+    .summary {
+      display: grid;
+      gap: 6px;
+      padding: 11px 12px;
+      background: #f7fbfa;
+      border: 1px solid #b7d8d3;
+      border-radius: 8px;
+      color: #164e45;
+      line-height: 1.5;
+    }
+    .summary strong { color: #0f3f38; }
+    .group {
+      display: grid;
+      gap: 8px;
+    }
+    .group-title {
+      color: #475467;
+      font-size: 12px;
+      font-weight: 700;
+    }
     .toolbar {
       display: grid;
       grid-template-columns: 1fr 1fr;
@@ -771,6 +799,14 @@ const INDEX_HTML: &str = r#"<!doctype html>
       font: inherit;
       cursor: pointer;
       text-align: left;
+      display: grid;
+      gap: 2px;
+    }
+    button strong { font-weight: 650; }
+    button small {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.35;
     }
     button.primary {
       background: var(--blue);
@@ -778,6 +814,7 @@ const INDEX_HTML: &str = r#"<!doctype html>
       color: #fff;
       text-align: center;
     }
+    button.primary small { color: #dbeafe; }
     button:hover { border-color: var(--blue); }
     button:disabled { color: #98a2b3; cursor: not-allowed; }
     .status {
@@ -795,6 +832,11 @@ const INDEX_HTML: &str = r#"<!doctype html>
       flex: 0 0 auto;
     }
     .muted { color: var(--muted); }
+    .event-label {
+      color: #475467;
+      font-size: 12px;
+      font-weight: 700;
+    }
     .content {
       display: grid;
       gap: 18px;
@@ -809,6 +851,34 @@ const INDEX_HTML: &str = r#"<!doctype html>
       background: #fbfcfe;
     }
     .panel-body { padding: 12px 14px; overflow-x: auto; }
+    .explainer {
+      display: grid;
+      gap: 12px;
+      line-height: 1.55;
+    }
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 8px;
+    }
+    .metric {
+      display: grid;
+      gap: 4px;
+      padding: 9px 10px;
+      border: 1px solid #edf0f4;
+      border-radius: 8px;
+      background: #fbfcfe;
+      min-width: 0;
+    }
+    .metric strong {
+      color: var(--ink);
+      font-size: 13px;
+    }
+    .metric span {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.35;
+    }
     table {
       width: 100%;
       border-collapse: collapse;
@@ -838,8 +908,13 @@ const INDEX_HTML: &str = r#"<!doctype html>
       background: #f9fafb;
       white-space: nowrap;
     }
-    .queued, .online, .completed, .approved { color: var(--green); border-color: #a7d7bd; background: #effaf4; }
-    .awaitingapproval, .awaitingruntime, .awaitingacceptance, .running { color: var(--amber); border-color: #e7c77c; background: #fff8e6; }
+    .mono {
+      color: #344054;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      font-size: 12px;
+    }
+    .queued, .online, .completed, .approved, .active { color: var(--green); border-color: #a7d7bd; background: #effaf4; }
+    .awaitingapproval, .awaitingruntime, .awaitingacceptance, .pending, .running { color: var(--amber); border-color: #e7c77c; background: #fff8e6; }
     .rejected, .failed, .offline, .cancelled { color: var(--red); border-color: #f0b399; background: #fff4ef; }
     .event-log {
       min-height: 40px;
@@ -853,42 +928,75 @@ const INDEX_HTML: &str = r#"<!doctype html>
       main { grid-template-columns: 1fr; padding: 14px; }
       aside { position: static; }
       header { align-items: flex-start; flex-direction: column; }
+      .metrics { grid-template-columns: 1fr 1fr; }
+    }
+    @media (max-width: 560px) {
+      .toolbar, .metrics { grid-template-columns: 1fr; }
     }
   </style>
 </head>
 <body>
   <header>
     <div>
-      <h1>Enterprise AI Collaboration MVP</h1>
-      <div class="muted">Workspace, Agent, Runtime, Task, Approval, Run, and Audit control plane</div>
+      <div class="eyebrow">本地可运行演示</div>
+      <h1>企业 AI 协作 MVP 演示台</h1>
+      <div class="muted">演示成员如何把工作交给公开 Agent，本地 Runtime 如何接单、审批、回传结果并留下审计记录。</div>
     </div>
     <div class="status"><span class="dot"></span><span id="mode">Loading</span></div>
   </header>
   <main>
     <aside class="stack">
-      <button class="primary" data-action="reset">Reset Fixture</button>
-      <div class="toolbar">
-        <button data-action="offline">Runtime Offline</button>
-        <button data-action="online">Runtime Online</button>
+      <div class="summary">
+        <strong>这页看什么</strong>
+        <span>左侧按顺序触发业务动作，右侧实时展示 Agent、任务、会话消息和审计证据。</span>
       </div>
-      <button data-action="start-db">Start Public Agent Conversation</button>
-      <button data-action="run-next">Run Next Task</button>
-      <button data-action="start-release">Start Owner-Approval Conversation</button>
-      <button data-action="approve">Approve Pending</button>
-      <button data-action="deny">Deny Pending</button>
-      <button data-action="run-next-approval">Run Next With Runtime Approval</button>
-      <button data-action="complete-run">Complete Running Run</button>
-      <button data-action="handoff">Create @Agent Handoff</button>
-      <button data-action="open-task">Create Open Pool Task</button>
-      <button data-action="claim-open">Claim Open Pool Task</button>
-      <button data-action="permission-denied">Permission Denied Check</button>
-      <div class="event-log" id="last-event">No events yet</div>
+      <div class="group">
+        <div class="group-title">推荐主流程</div>
+        <button class="primary" data-action="reset"><strong>重置演示数据</strong><small>回到干净工作区</small></button>
+        <button data-action="start-db"><strong>1. 成员向公开 Agent 提问</strong><small>生成会话和定向任务</small></button>
+        <button data-action="run-next"><strong>2. Runtime 接单并返回结果</strong><small>任务完成后消息和审计会更新</small></button>
+      </div>
+      <div class="group">
+        <div class="group-title">审批与异常场景</div>
+        <button data-action="start-release"><strong>发起需负责人审批的发布检查</strong><small>生成待审批任务</small></button>
+        <div class="toolbar">
+          <button data-action="approve"><strong>批准</strong><small>通过待审批项</small></button>
+          <button data-action="deny"><strong>拒绝</strong><small>拒绝待审批项</small></button>
+        </div>
+        <button data-action="run-next-approval"><strong>Runtime 执行中请求审批</strong><small>模拟高风险操作暂停</small></button>
+        <button data-action="complete-run"><strong>完成已批准的运行</strong><small>回传执行结果</small></button>
+      </div>
+      <div class="group">
+        <div class="group-title">协作能力</div>
+        <div class="toolbar">
+          <button data-action="offline"><strong>Runtime 离线</strong><small>任务进入等待</small></button>
+          <button data-action="online"><strong>Runtime 在线</strong><small>恢复接单能力</small></button>
+        </div>
+        <button data-action="handoff"><strong>创建 @Agent 转交</strong><small>把上下文转给报告 Agent</small></button>
+        <button data-action="open-task"><strong>创建公开任务池任务</strong><small>不指定 Agent，等待认领</small></button>
+        <button data-action="claim-open"><strong>认领公开任务</strong><small>报告 Agent 接下任务</small></button>
+        <button data-action="permission-denied"><strong>验证越权访问失败</strong><small>工作区外用户会被拒绝</small></button>
+      </div>
+      <div class="event-label">最近一次动作</div>
+      <div class="event-log" id="last-event">还没有操作</div>
     </aside>
     <div class="content">
-      <section class="panel"><h2>Agents And Runtime</h2><div class="panel-body" id="agents"></div></section>
-      <section class="panel"><h2>Tasks Runs Approvals</h2><div class="panel-body" id="tasks"></div></section>
-      <section class="panel"><h2>Conversation Messages</h2><div class="panel-body" id="messages"></div></section>
-      <section class="panel"><h2>Audit</h2><div class="panel-body" id="audit"></div></section>
+      <section class="panel">
+        <h2>这套程序在证明什么</h2>
+        <div class="panel-body explainer">
+          <p>它不是聊天机器人成品，而是企业 AI 协作的本地 MVP：证明公开 Agent 目录、任务派发、Runtime 在线/离线、负责人审批、@Agent 转交、公开任务池和审计留痕这些产品链路可以跑通。</p>
+          <div class="metrics">
+            <div class="metric"><strong>公开 Agent</strong><span>成员能直接发起协作</span></div>
+            <div class="metric"><strong>本地 Runtime</strong><span>模拟 Codex 执行环境接单</span></div>
+            <div class="metric"><strong>审批</strong><span>高风险操作先暂停确认</span></div>
+            <div class="metric"><strong>审计</strong><span>关键动作都有可追踪记录</span></div>
+          </div>
+        </div>
+      </section>
+      <section class="panel"><h2>Agent 与 Runtime 状态</h2><div class="panel-body" id="agents"></div></section>
+      <section class="panel"><h2>任务、运行与审批</h2><div class="panel-body" id="tasks"></div></section>
+      <section class="panel"><h2>会话消息</h2><div class="panel-body" id="messages"></div></section>
+      <section class="panel"><h2>审计记录</h2><div class="panel-body" id="audit"></div></section>
     </div>
   </main>
   <script>
@@ -900,9 +1008,79 @@ const INDEX_HTML: &str = r#"<!doctype html>
     }).then(r => r.json());
     const get = url => fetch(url).then(r => r.json());
     const cls = value => String(value || "").replace(/_/g, "").toLowerCase();
-    const pill = value => `<span class="pill ${cls(value)}">${value ?? ""}</span>`;
     const esc = value => String(value ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[c]));
-    const table = (headers, rows) => `<table><thead><tr>${headers.map(h => `<th>${h}</th>`).join("")}</tr></thead><tbody>${rows.join("") || `<tr><td colspan="${headers.length}" class="muted">Empty</td></tr>`}</tbody></table>`;
+    const labels = {
+      active: "可用",
+      approved: "已批准",
+      awaiting_acceptance: "等待接单",
+      awaiting_approval: "等待审批",
+      awaiting_runtime: "等待 Runtime",
+      auto_accept_low_risk: "低风险自动接单",
+      cancelled: "已取消",
+      completed: "已完成",
+      failed: "失败",
+      fixture: "本地演示",
+      handoff: "@Agent 转交",
+      internal: "内部",
+      offline: "离线",
+      online: "在线",
+      open: "公开任务池",
+      pending: "待处理",
+      public: "公开",
+      queued: "排队中",
+      rejected: "已拒绝",
+      requires_owner_approval: "需负责人审批",
+      running: "执行中",
+      targeted: "定向任务",
+      agent: "Agent",
+      runtime: "Runtime",
+      task: "任务",
+      user: "成员",
+      workspace: "工作区"
+    };
+    const eventLabels = {
+      "agent.created": "创建 Agent",
+      "agent.runtime_bound": "绑定 Runtime",
+      "approval.decided": "审批完成",
+      "approval.requested": "请求审批",
+      "conversation.started": "发起会话",
+      "handoff.created": "创建 @Agent 转交",
+      "runtime.heartbeat": "Runtime 状态更新",
+      "run.completed": "运行完成",
+      "run.started": "运行开始",
+      "task.created": "创建任务",
+      "task.open_claimed": "认领公开任务",
+      "task.open_created": "创建公开任务",
+      "workspace.created": "创建工作区",
+      "workspace.member_added": "添加成员"
+    };
+    const agentNames = {
+      "Database Agent": "数据库诊断 Agent",
+      "Release Agent": "发布检查 Agent",
+      "Reporting Agent": "报告汇总 Agent"
+    };
+    const label = value => labels[String(value ?? "")] || value || "";
+    const eventLabel = value => eventLabels[String(value ?? "")] || value || "";
+    const agentLabel = value => agentNames[String(value ?? "")] || value || "";
+    const idText = value => value ? `<span class="mono">${esc(value)}</span>` : "无";
+    const pill = value => `<span class="pill ${cls(value)}">${esc(label(value))}</span>`;
+    const lastEvent = value => {
+      const text = String(value || "");
+      if (text === "demo fixture seeded") return "演示数据已重置，当前是干净工作区。";
+      if (text.includes("conversation") && text.includes("started")) return "已发起 Agent 会话，右侧会出现新任务和消息。";
+      if (text.includes("completed run")) return "Runtime 已完成任务，右侧任务、消息和审计已更新。";
+      if (text.includes("requested approval")) return "Runtime 已暂停并请求审批，请在左侧批准或拒绝。";
+      if (text.includes("approval") && text.includes("decided")) return "审批已处理，右侧审批状态已更新。";
+      if (text.includes("open task") && text.includes("created")) return "已创建公开任务池任务，等待 Agent 认领。";
+      if (text.includes("open task") && text.includes("claimed")) return "公开任务已被 Agent 认领。";
+      if (text.includes("handoff task")) return "已创建 @Agent 转交任务。";
+      if (text.includes("permission denied")) return "越权访问已按预期被拒绝。";
+      if (text.includes("status set to Offline")) return "Runtime 已离线，新任务会等待 Runtime 恢复。";
+      if (text.includes("status set to Online")) return "Runtime 已在线，可以继续接单。";
+      if (text.includes("run") && text.includes("completed")) return "运行已完成，结果已回传。";
+      return text || "还没有操作";
+    };
+    const table = (headers, rows) => `<table><thead><tr>${headers.map(h => `<th>${h}</th>`).join("")}</tr></thead><tbody>${rows.join("") || `<tr><td colspan="${headers.length}" class="muted">暂无数据</td></tr>`}</tbody></table>`;
     async function refresh() {
       snapshot = await get("/api/snapshot");
       render(snapshot);
@@ -932,24 +1110,25 @@ const INDEX_HTML: &str = r#"<!doctype html>
       }
     }
     function render(data, error) {
-      document.getElementById("mode").textContent = `${data.provider_mode} provider mode`;
-      document.getElementById("last-event").textContent = error || data.last_event;
+      document.getElementById("mode").textContent = `${label(data.provider_mode)}模式`;
+      document.getElementById("last-event").textContent = error ? `操作失败：${error}` : lastEvent(data.last_event);
+      const agentById = Object.fromEntries(data.state.agents.map(agent => [agent.id, agentLabel(agent.name)]));
       const agents = data.state.agents.map(agent => {
         const binding = data.state.bindings.find(b => b.agent_id === agent.id);
         const runtime = data.state.runtimes.find(r => r.id === binding?.runtime_id);
-        return `<tr><td>${esc(agent.name)}</td><td>${esc(agent.visibility)}</td><td>${esc(agent.acceptance_policy)}</td><td>${pill(agent.status)}</td><td>${esc(runtime?.display_name)}</td><td>${pill(runtime?.status)}</td></tr>`;
+        return `<tr><td>${esc(agentLabel(agent.name))}</td><td>${esc(label(agent.visibility))}</td><td>${esc(label(agent.acceptance_policy))}</td><td>${pill(agent.status)}</td><td>${esc(runtime?.display_name || "未绑定")}</td><td>${pill(runtime?.status)}</td></tr>`;
       });
-      document.getElementById("agents").innerHTML = table(["Agent", "Visibility", "Policy", "Agent Status", "Runtime", "Runtime Status"], agents);
+      document.getElementById("agents").innerHTML = table(["Agent", "可见性", "接单策略", "Agent 状态", "Runtime", "Runtime 状态"], agents);
       const tasks = data.state.tasks.map(task => {
         const run = data.state.runs.find(r => r.task_id === task.id);
         const approval = data.state.approvals.find(a => a.task_id === task.id);
-        return `<tr><td>${esc(task.id)}</td><td>${esc(task.task_type)}</td><td>${pill(task.status)}</td><td>${esc(task.assigned_agent_id)}</td><td>${esc(run?.id || "")} ${run ? pill(run.status) : ""}</td><td>${esc(approval?.id || "")} ${approval ? pill(approval.status) : ""}</td><td>${esc(task.prompt)}</td></tr>`;
+        return `<tr><td>${idText(task.id)}</td><td>${esc(label(task.task_type))}</td><td>${pill(task.status)}</td><td>${esc(agentById[task.assigned_agent_id] || "未分配")}</td><td>${run ? `${idText(run.id)} ${pill(run.status)}` : "无"}</td><td>${approval ? `${idText(approval.id)} ${pill(approval.status)}` : "无"}</td><td>${esc(task.prompt)}</td></tr>`;
       });
-      document.getElementById("tasks").innerHTML = table(["Task", "Type", "Status", "Agent", "Run", "Approval", "Prompt"], tasks);
-      const messages = data.state.messages.map(message => `<tr><td>${esc(message.conversation_id)}</td><td>${esc(message.sender_type)}</td><td>${esc(message.sender_id)}</td><td>${esc(message.content)}</td></tr>`);
-      document.getElementById("messages").innerHTML = table(["Conversation", "Sender Type", "Sender", "Content"], messages);
-      const audit = data.state.audit_events.slice(-20).reverse().map(event => `<tr><td>${esc(event.id)}</td><td>${esc(event.action)}</td><td>${esc(event.resource_type)}</td><td>${esc(event.resource_id)}</td><td>${esc(JSON.stringify(event.redacted_payload))}</td></tr>`);
-      document.getElementById("audit").innerHTML = table(["ID", "Action", "Resource", "Resource ID", "Redacted Payload"], audit);
+      document.getElementById("tasks").innerHTML = table(["任务", "类型", "状态", "负责 Agent", "运行", "审批", "用户请求"], tasks);
+      const messages = data.state.messages.map(message => `<tr><td>${idText(message.conversation_id)}</td><td>${esc(label(message.sender_type))}</td><td>${idText(message.sender_id)}</td><td>${esc(message.content)}</td></tr>`);
+      document.getElementById("messages").innerHTML = table(["会话", "发送方类型", "发送方", "内容"], messages);
+      const audit = data.state.audit_events.slice(-20).reverse().map(event => `<tr><td>${idText(event.id)}</td><td>${esc(eventLabel(event.action))}</td><td>${esc(label(event.resource_type))}</td><td>${idText(event.resource_id)}</td><td>${esc(JSON.stringify(event.redacted_payload))}</td></tr>`);
+      document.getElementById("audit").innerHTML = table(["记录", "动作", "对象", "对象 ID", "脱敏载荷"], audit);
     }
     document.querySelectorAll("button[data-action]").forEach(button => button.addEventListener("click", () => act(button.dataset.action)));
     refresh();

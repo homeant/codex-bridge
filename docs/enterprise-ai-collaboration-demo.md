@@ -12,6 +12,16 @@ cargo run -p control-plane --bin mvp-demo -- --addr 127.0.0.1:8787
 
 Open `http://127.0.0.1:8787`.
 
+## 中文快速演示路径
+
+打开页面后先看左侧“推荐主流程”：
+
+1. 点“重置演示数据”，回到干净工作区。
+2. 点“成员向公开 Agent 提问”，右侧会出现一条会话消息和一个定向任务。
+3. 点“Runtime 接单并返回结果”，右侧任务状态、会话消息和审计记录会更新。
+
+这套本地程序证明的是企业 AI 协作的产品链路：公开 Agent、任务派发、本地 Runtime 接单、审批、`@Agent` 转交、公开任务池和审计留痕。它仍是 fixture demo，不会真的启动 Codex App Server 执行任务。
+
 The server seeds:
 
 - one active Workspace;
