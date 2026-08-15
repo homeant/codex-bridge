@@ -388,7 +388,7 @@ pub enum ActorType {
     Channel,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct ConversationStart {
     pub conversation_id: ConversationId,
     pub message_id: MessageId,
@@ -396,10 +396,54 @@ pub struct ConversationStart {
     pub status: TaskStatus,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct HandoffStart {
     pub task_id: TaskId,
     pub status: TaskStatus,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct ApprovalOutcome {
+    pub approval_request_id: ApprovalRequestId,
+    pub task_id: TaskId,
+    pub run_id: Option<RunId>,
+    pub approved: bool,
+    pub reason: Option<String>,
+}
+
+impl ApprovalOutcome {
+    pub fn runtime_decision(
+        &self,
+    ) -> Result<runtime_connector_protocol::ApprovalDecision, ControlPlaneError> {
+        let Some(run_id) = self.run_id.clone() else {
+            return Err(ControlPlaneError::InvalidState(
+                "task-level approval has no runtime decision".into(),
+            ));
+        };
+        Ok(runtime_connector_protocol::ApprovalDecision {
+            approval_request_id: self.approval_request_id.clone(),
+            run_id,
+            approved: self.approved,
+            reason: self.reason.clone(),
+        })
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct ControlPlaneSnapshot {
+    pub users: Vec<User>,
+    pub workspaces: Vec<Workspace>,
+    pub members: Vec<WorkspaceMember>,
+    pub agents: Vec<Agent>,
+    pub runtimes: Vec<Runtime>,
+    pub bindings: Vec<AgentRuntimeBinding>,
+    pub conversations: Vec<Conversation>,
+    pub participants: Vec<ConversationParticipant>,
+    pub messages: Vec<ConversationMessage>,
+    pub tasks: Vec<Task>,
+    pub runs: Vec<Run>,
+    pub approvals: Vec<ApprovalRequest>,
+    pub audit_events: Vec<AuditEvent>,
 }
 
 #[derive(Debug, Default)]
@@ -573,6 +617,9 @@ impl MvpControlPlane {
             resource_id: Some(runtime_id.to_owned()),
             redacted_payload: json!({ "status": status }),
         });
+        if matches!(status, RuntimeStatus::Online | RuntimeStatus::Busy) {
+            self.resume_tasks_waiting_for_runtime(runtime_id)?;
+        }
         Ok(())
     }
 
@@ -736,6 +783,7 @@ impl MvpControlPlane {
             shared_context_manifest: SharedContextManifest::empty(),
             status,
         });
+        self.prepare_new_task(&task_id)?;
         self.audit(AuditDraft {
             workspace_id,
             actor_type: ActorType::User,
@@ -907,7 +955,7 @@ impl MvpControlPlane {
                 "runtime is not online".into(),
             ));
         }
-        if !self.offered_tasks.remove(task_id) {
+        if !self.offered_tasks.contains(task_id) {
             return Err(ControlPlaneError::InvalidState(
                 "task was not offered to this runtime".into(),
             ));
@@ -923,6 +971,7 @@ impl MvpControlPlane {
                 "task assigned to a different runtime".into(),
             ));
         }
+        self.offered_tasks.remove(task_id);
         let agent_id = task
             .assigned_agent_id
             .clone()
@@ -1025,7 +1074,7 @@ impl MvpControlPlane {
         approval_id: &str,
         approved: bool,
         reason: Option<String>,
-    ) -> Result<runtime_connector_protocol::ApprovalDecision, ControlPlaneError> {
+    ) -> Result<ApprovalOutcome, ControlPlaneError> {
         let approval = self.approval(approval_id)?.clone();
         if approval.status != ApprovalStatus::Pending {
             return Err(ControlPlaneError::InvalidState(
@@ -1040,17 +1089,26 @@ impl MvpControlPlane {
                 ));
             }
         }
-        let run_id = approval.run_id.clone().ok_or_else(|| {
-            ControlPlaneError::InvalidState("approval is not bound to a run".into())
-        })?;
-        if approved {
-            self.approval_mut(approval_id)?.status = ApprovalStatus::Approved;
-            self.run_mut(&run_id)?.status = RunStatus::Running;
-            self.task_mut(&approval.task_id)?.status = TaskStatus::Running;
-        } else {
-            self.approval_mut(approval_id)?.status = ApprovalStatus::Rejected;
-            self.run_mut(&run_id)?.status = RunStatus::Cancelled;
-            self.task_mut(&approval.task_id)?.status = TaskStatus::Rejected;
+        match approval.run_id.as_deref() {
+            Some(run_id) if approved => {
+                self.approval_mut(approval_id)?.status = ApprovalStatus::Approved;
+                self.run_mut(run_id)?.status = RunStatus::Running;
+                self.task_mut(&approval.task_id)?.status = TaskStatus::Running;
+            }
+            Some(run_id) => {
+                self.approval_mut(approval_id)?.status = ApprovalStatus::Rejected;
+                self.run_mut(run_id)?.status = RunStatus::Cancelled;
+                self.task_mut(&approval.task_id)?.status = TaskStatus::Rejected;
+            }
+            None if approved => {
+                self.approval_mut(approval_id)?.status = ApprovalStatus::Approved;
+                let next_status = self.status_after_task_approval(&approval.task_id)?;
+                self.task_mut(&approval.task_id)?.status = next_status;
+            }
+            None => {
+                self.approval_mut(approval_id)?.status = ApprovalStatus::Rejected;
+                self.task_mut(&approval.task_id)?.status = TaskStatus::Rejected;
+            }
         }
         self.audit(AuditDraft {
             workspace_id: &approval.workspace_id,
@@ -1061,9 +1119,10 @@ impl MvpControlPlane {
             resource_id: Some(approval_id.to_owned()),
             redacted_payload: json!({ "approved": approved }),
         });
-        Ok(runtime_connector_protocol::ApprovalDecision {
+        Ok(ApprovalOutcome {
             approval_request_id: approval_id.to_owned(),
-            run_id,
+            task_id: approval.task_id,
+            run_id: approval.run_id,
             approved,
             reason,
         })
@@ -1168,6 +1227,7 @@ impl MvpControlPlane {
             shared_context_manifest: manifest,
             status,
         });
+        self.prepare_new_task(&task_id)?;
         if let Some(conversation_id) = parent.conversation_id {
             self.participants.push(ConversationParticipant {
                 workspace_id: parent.workspace_id.clone(),
@@ -1244,6 +1304,48 @@ impl MvpControlPlane {
             .collect()
     }
 
+    pub fn snapshot(&self) -> ControlPlaneSnapshot {
+        let mut users = self.users.values().cloned().collect::<Vec<_>>();
+        users.sort_by(|left, right| left.id.cmp(&right.id));
+        let mut workspaces = self.workspaces.values().cloned().collect::<Vec<_>>();
+        workspaces.sort_by(|left, right| left.id.cmp(&right.id));
+        let mut members = self.members.values().cloned().collect::<Vec<_>>();
+        members.sort_by(|left, right| {
+            left.workspace_id
+                .cmp(&right.workspace_id)
+                .then(left.user_id.cmp(&right.user_id))
+        });
+        let mut agents = self.agents.values().cloned().collect::<Vec<_>>();
+        agents.sort_by(|left, right| left.id.cmp(&right.id));
+        let mut runtimes = self.runtimes.values().cloned().collect::<Vec<_>>();
+        runtimes.sort_by(|left, right| left.id.cmp(&right.id));
+        let mut bindings = self.bindings.values().cloned().collect::<Vec<_>>();
+        bindings.sort_by(|left, right| left.agent_id.cmp(&right.agent_id));
+        let mut conversations = self.conversations.values().cloned().collect::<Vec<_>>();
+        conversations.sort_by(|left, right| left.id.cmp(&right.id));
+        let mut tasks = self.tasks.values().cloned().collect::<Vec<_>>();
+        tasks.sort_by(|left, right| left.id.cmp(&right.id));
+        let mut runs = self.runs.values().cloned().collect::<Vec<_>>();
+        runs.sort_by(|left, right| left.id.cmp(&right.id));
+        let mut approvals = self.approvals.values().cloned().collect::<Vec<_>>();
+        approvals.sort_by(|left, right| left.id.cmp(&right.id));
+        ControlPlaneSnapshot {
+            users,
+            workspaces,
+            members,
+            agents,
+            runtimes,
+            bindings,
+            conversations,
+            participants: self.participants.clone(),
+            messages: self.messages.clone(),
+            tasks,
+            runs,
+            approvals,
+            audit_events: self.audit_events.clone(),
+        }
+    }
+
     fn create_task(&mut self, draft: TaskDraft) -> TaskId {
         let task_id = self.next_id("tsk");
         self.tasks.insert(
@@ -1266,6 +1368,143 @@ impl MvpControlPlane {
             },
         );
         task_id
+    }
+
+    fn prepare_new_task(&mut self, task_id: &str) -> Result<(), ControlPlaneError> {
+        if self.task(task_id)?.status == TaskStatus::AwaitingApproval {
+            self.create_task_execution_approval(task_id)?;
+        }
+        Ok(())
+    }
+
+    fn resume_tasks_waiting_for_runtime(
+        &mut self,
+        runtime_id: &str,
+    ) -> Result<(), ControlPlaneError> {
+        let waiting = self
+            .tasks
+            .values()
+            .filter(|task| task.status == TaskStatus::AwaitingRuntime)
+            .filter_map(|task| {
+                let agent_id = task.assigned_agent_id.as_deref()?;
+                let binding = self.bindings.get(agent_id)?;
+                (binding.runtime_id == runtime_id && binding.enabled).then(|| task.id.clone())
+            })
+            .collect::<Vec<_>>();
+        for task_id in waiting {
+            let next_status = self.status_after_runtime_available(&task_id)?;
+            {
+                let task = self.task_mut(&task_id)?;
+                task.status = next_status;
+            }
+            if next_status == TaskStatus::AwaitingApproval {
+                self.create_task_execution_approval(&task_id)?;
+            }
+            let workspace_id = self.task(&task_id)?.workspace_id.clone();
+            self.audit(AuditDraft {
+                workspace_id: &workspace_id,
+                actor_type: ActorType::System,
+                actor_id: None,
+                action: "task.runtime_available",
+                resource_type: "task",
+                resource_id: Some(task_id),
+                redacted_payload: json!({ "runtime_id": runtime_id, "status": next_status }),
+            });
+        }
+        Ok(())
+    }
+
+    fn status_after_runtime_available(
+        &self,
+        task_id: &str,
+    ) -> Result<TaskStatus, ControlPlaneError> {
+        let task = self.task(task_id)?;
+        let agent_id = task
+            .assigned_agent_id
+            .as_deref()
+            .ok_or_else(|| ControlPlaneError::InvalidState("task has no assigned agent".into()))?;
+        let agent = self.agent(agent_id)?;
+        self.ready_binding(agent)?;
+        Ok(match agent.acceptance_policy {
+            AcceptancePolicy::AutoAcceptLowRisk => TaskStatus::Queued,
+            AcceptancePolicy::RequiresOwnerApproval
+                if self.has_task_execution_approval(task_id, ApprovalStatus::Approved) =>
+            {
+                TaskStatus::Queued
+            }
+            AcceptancePolicy::RequiresOwnerApproval => TaskStatus::AwaitingApproval,
+        })
+    }
+
+    fn status_after_task_approval(&self, task_id: &str) -> Result<TaskStatus, ControlPlaneError> {
+        let task = self.task(task_id)?;
+        let agent_id = task
+            .assigned_agent_id
+            .as_deref()
+            .ok_or_else(|| ControlPlaneError::InvalidState("task has no assigned agent".into()))?;
+        let agent = self.agent(agent_id)?;
+        Ok(if self.ready_binding(agent).is_ok() {
+            TaskStatus::Queued
+        } else {
+            TaskStatus::AwaitingRuntime
+        })
+    }
+
+    fn create_task_execution_approval(
+        &mut self,
+        task_id: &str,
+    ) -> Result<ApprovalRequestId, ControlPlaneError> {
+        if let Some(existing_id) = self
+            .approvals
+            .values()
+            .find(|approval| {
+                approval.task_id == task_id
+                    && approval.run_id.is_none()
+                    && approval.status == ApprovalStatus::Pending
+            })
+            .map(|approval| approval.id.clone())
+        {
+            return Ok(existing_id);
+        }
+        let task = self.task(task_id)?.clone();
+        let agent_id = task
+            .assigned_agent_id
+            .as_deref()
+            .ok_or_else(|| ControlPlaneError::InvalidState("task has no assigned agent".into()))?;
+        let agent = self.agent(agent_id)?.clone();
+        let approval_id = self.next_id("apr");
+        self.approvals.insert(
+            approval_id.clone(),
+            ApprovalRequest {
+                id: approval_id.clone(),
+                workspace_id: task.workspace_id.clone(),
+                task_id: task_id.to_owned(),
+                run_id: None,
+                approver_user_id: agent.owner_user_id,
+                action_type: "agent_task_execution".into(),
+                target: format!("agent:{} task:{}", agent.id, task_id),
+                scope: "one queued agent task in the current workspace".into(),
+                impact: "allows the responsible runtime to accept and execute this task".into(),
+                recovery_plan: "reject the approval before the runtime accepts the task".into(),
+                status: ApprovalStatus::Pending,
+            },
+        );
+        self.audit(AuditDraft {
+            workspace_id: &task.workspace_id,
+            actor_type: ActorType::System,
+            actor_id: None,
+            action: "approval.requested",
+            resource_type: "approval_request",
+            resource_id: Some(approval_id.clone()),
+            redacted_payload: json!({ "task_id": task_id, "run_id": null }),
+        });
+        Ok(approval_id)
+    }
+
+    fn has_task_execution_approval(&self, task_id: &str, status: ApprovalStatus) -> bool {
+        self.approvals.values().any(|approval| {
+            approval.task_id == task_id && approval.run_id.is_none() && approval.status == status
+        })
     }
 
     fn initial_task_status(&self, agent: &Agent) -> Result<TaskStatus, ControlPlaneError> {
@@ -1697,6 +1936,169 @@ mod tests {
         assert_eq!(start.status, TaskStatus::AwaitingRuntime);
         assert!(plane.offer_next_task(&runtime_id).unwrap().is_none());
         assert!(plane.runs.is_empty());
+    }
+
+    #[test]
+    fn offline_runtime_requeues_waiting_task_after_heartbeat() {
+        let mut plane = seeded_plane();
+        let Fixture {
+            workspace_id,
+            requester,
+            agent_id,
+            runtime_id,
+            ..
+        } = fixture_without_online_runtime(
+            &mut plane,
+            AcceptancePolicy::AutoAcceptLowRisk,
+            AgentVisibility::Public,
+        );
+
+        let start = plane
+            .start_agent_conversation(&requester, &workspace_id, &agent_id, "run check")
+            .unwrap();
+        assert_eq!(start.status, TaskStatus::AwaitingRuntime);
+
+        plane
+            .runtime_heartbeat(&runtime_id, RuntimeStatus::Online)
+            .unwrap();
+
+        assert_eq!(
+            plane.task(&start.task_id).unwrap().status,
+            TaskStatus::Queued
+        );
+        let offer = plane.offer_next_task(&runtime_id).unwrap().unwrap();
+        assert_eq!(offer.task_id, start.task_id);
+    }
+
+    #[test]
+    fn wrong_runtime_cannot_consume_another_runtime_offer() {
+        let mut plane = seeded_plane();
+        let Fixture {
+            workspace_id,
+            requester,
+            owner,
+            agent_id,
+            runtime_id,
+        } = fixture(
+            &mut plane,
+            AcceptancePolicy::AutoAcceptLowRisk,
+            AgentVisibility::Public,
+        );
+        let other_runtime = plane
+            .register_runtime(
+                &owner,
+                &workspace_id,
+                "Owner backup runtime",
+                vec![RuntimeProject {
+                    project_key: "orders-api".into(),
+                    display_name: "Orders API".into(),
+                    path_digest: Some("sha256:redacted-backup".into()),
+                    status: RuntimeProjectStatus::Active,
+                }],
+            )
+            .unwrap();
+        plane
+            .runtime_heartbeat(&other_runtime, RuntimeStatus::Online)
+            .unwrap();
+
+        let start = plane
+            .start_agent_conversation(&requester, &workspace_id, &agent_id, "run check")
+            .unwrap();
+        plane.offer_next_task(&runtime_id).unwrap().unwrap();
+
+        let wrong_runtime_error = plane
+            .runtime_accept_task(&other_runtime, &start.task_id)
+            .unwrap_err();
+        assert_eq!(
+            wrong_runtime_error,
+            ControlPlaneError::Forbidden("task assigned to a different runtime".into())
+        );
+        assert!(
+            plane
+                .runtime_accept_task(&runtime_id, &start.task_id)
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn owner_approval_policy_creates_task_approval_and_queues_after_approval() {
+        let mut plane = seeded_plane();
+        let Fixture {
+            workspace_id,
+            requester,
+            owner,
+            agent_id,
+            runtime_id,
+        } = fixture(
+            &mut plane,
+            AcceptancePolicy::RequiresOwnerApproval,
+            AgentVisibility::Public,
+        );
+
+        let start = plane
+            .start_agent_conversation(&requester, &workspace_id, &agent_id, "run check")
+            .unwrap();
+        assert_eq!(start.status, TaskStatus::AwaitingApproval);
+        let approval_id = plane
+            .approvals
+            .values()
+            .find(|approval| approval.task_id == start.task_id && approval.run_id.is_none())
+            .map(|approval| approval.id.clone())
+            .expect("task execution approval");
+
+        let outcome = plane
+            .decide_approval(&owner, &approval_id, true, Some("approved".into()))
+            .unwrap();
+
+        assert!(outcome.approved);
+        assert_eq!(outcome.run_id, None);
+        assert_eq!(
+            plane.task(&start.task_id).unwrap().status,
+            TaskStatus::Queued
+        );
+        assert!(plane.offer_next_task(&runtime_id).unwrap().is_some());
+    }
+
+    #[test]
+    fn owner_approval_waits_for_runtime_before_creating_task_approval() {
+        let mut plane = seeded_plane();
+        let Fixture {
+            workspace_id,
+            requester,
+            agent_id,
+            runtime_id,
+            ..
+        } = fixture_without_online_runtime(
+            &mut plane,
+            AcceptancePolicy::RequiresOwnerApproval,
+            AgentVisibility::Public,
+        );
+
+        let start = plane
+            .start_agent_conversation(&requester, &workspace_id, &agent_id, "run check")
+            .unwrap();
+        assert_eq!(start.status, TaskStatus::AwaitingRuntime);
+        assert!(
+            plane
+                .approvals
+                .values()
+                .all(|approval| approval.task_id != start.task_id)
+        );
+
+        plane
+            .runtime_heartbeat(&runtime_id, RuntimeStatus::Online)
+            .unwrap();
+
+        assert_eq!(
+            plane.task(&start.task_id).unwrap().status,
+            TaskStatus::AwaitingApproval
+        );
+        assert!(
+            plane
+                .approvals
+                .values()
+                .any(|approval| approval.task_id == start.task_id && approval.run_id.is_none())
+        );
     }
 
     #[test]

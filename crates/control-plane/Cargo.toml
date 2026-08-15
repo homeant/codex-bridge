@@ -4,6 +4,10 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[[bin]]
+name = "mvp-demo"
+path = "src/bin/mvp_demo.rs"
+
 [dependencies]
 runtime-connector-protocol = { path = "../runtime-connector-protocol" }
 serde.workspace = true

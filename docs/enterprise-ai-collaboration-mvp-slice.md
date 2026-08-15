@@ -1,6 +1,6 @@
 # Enterprise AI Collaboration MVP Slice
 
-This repository now contains the first reviewable vertical slice for the enterprise AI collaboration platform described in `docs/enterprise-ai-collaboration-design.md`.
+This repository now contains the first reviewable vertical slice for the enterprise AI collaboration platform described in `docs/enterprise-ai-collaboration-design.md`, plus a local demo surface for product handoff.
 
 ## Scope
 
@@ -11,11 +11,12 @@ Implemented:
 - `crates/runtime-connector-protocol`: versioned Runtime Connector DTOs for task offers, run start, progress, approval, cancellation, completion, handoff, shared-context manifests, and runtime project summaries.
 - `crates/control-plane`: an MVP control-plane domain service with Workspace, member, Agent, Runtime, conversation, task, run, approval, and audit models.
 - `crates/control-plane/migrations/0001_core.sql`: the first persistence schema draft for the core tables and indexes.
-- Unit tests that run a fake local Runtime/Codex Provider chain through public-Agent conversation, task offer, run start, approval rejection, result return, Runtime-offline waiting, Handoff, public task-pool claim, and cross-Workspace/private-Agent denial paths.
+- `cargo run -p control-plane --bin mvp-demo -- --addr 127.0.0.1:8787`: a local HTTP API and browser UI backed by seeded fixture state. See `docs/enterprise-ai-collaboration-demo.md`.
+- Unit tests that run a fake local Runtime/Codex Provider chain through public-Agent conversation, task offer, run start, task-level owner approval, runtime approval rejection, result return, Runtime-offline recovery, Handoff, public task-pool claim, and cross-Workspace/private-Agent denial paths.
 
 Deferred:
 
-- HTTP handlers, UI routes, Postgres repository implementation, and a live Runtime WebSocket server.
+- Production HTTP handlers, production UI routing, Postgres repository implementation, and a live Runtime WebSocket server.
 - Hosted Runtime, multi-Runtime scheduling, cross-Workspace collaboration, automatic DAG orchestration, and Channel-first flows.
 - Real Codex App Server execution; tests use the protocol boundary as a fake Runtime/Provider.
 
@@ -34,7 +35,9 @@ Failure paths are explicit:
 
 - Private Agents cannot be called by regular members.
 - Cross-Workspace Agent access fails closed.
-- Offline Runtime leaves the task in `awaiting_runtime`; it does not silently succeed or move to another member's Runtime.
+- Offline Runtime leaves the task in `awaiting_runtime`; when the bound Runtime reports online again, the task returns to a dispatchable or owner-approval state.
+- Owner-confirmation Agents create a task-level `ApprovalRequest` before the Runtime can accept the task.
+- A Runtime cannot consume another Runtime's task offer by attempting to accept it.
 - Approval rejection moves the task to `rejected` and cancels the run.
 - Handoff rejects repeated Agent loops and stores a minimal shared-context manifest.
 

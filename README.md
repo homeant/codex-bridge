@@ -6,6 +6,8 @@ See [Requirements](docs/requirements.md) and [Architecture](docs/architecture.md
 
 For a real WeCom bot smoke test, follow [WeCom end-to-end verification](docs/wecom-e2e.md). The checklist covers Node visibility, Codex login, project configuration, adapter selection, ACLs, expected messages, and common failures.
 
+For the enterprise AI collaboration MVP product loop, run the local HTTP/UI fixture described in [Enterprise AI Collaboration MVP Demo](docs/enterprise-ai-collaboration-demo.md).
+
 ## Development
 
 ```bash
