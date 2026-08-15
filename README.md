@@ -6,6 +6,8 @@ See [Requirements](docs/requirements.md) and [Architecture](docs/architecture.md
 
 For a real WeCom bot smoke test, follow [WeCom end-to-end verification](docs/wecom-e2e.md). The checklist covers Node visibility, Codex login, project configuration, adapter selection, ACLs, expected messages, and common failures.
 
+For the enterprise AI collaboration MVP product loop, run the local HTTP/UI fixture described in [Enterprise AI Collaboration MVP Demo](docs/enterprise-ai-collaboration-demo.md).
+
 ## Development
 
 ```bash
@@ -23,7 +25,7 @@ cargo run -p bridge-daemon
 
 Runtime configuration and SQLite state live outside the checkout by default: configuration is `~/.codex-bridge/bridge.toml`, while a relative `state.sqlite_path` is resolved from that same directory. Configure `codex.project_router_prompt` and `[[projects]]` there. Project paths are canonicalized and must remain inside `codex.allowed_roots`; Codex passes only a configured project ID to the bridge. Codex can inspect the live catalog with `codex_app.list_projects`, while `add_project`, `update_project`, and `delete_project` atomically update both the running bridge and `bridge.toml`. Catalog mutations are accepted only when the current IM requester is listed in that adapter's `approval_users`; a new or changed path must already exist below an allowed root, and the final project cannot be deleted. Set each adapter's `cwd` to this repository so its relative script path resolves. Adapter credentials may be injected by the debugger or placed in the ignored repository-root `.env`; disable adapters you are not running.
 
-To select a model only for IM traffic, set `codex.model` and `codex.model_provider` in `~/.codex-bridge/bridge.toml`. Define that provider in `~/.codex/config.toml`; its `env_key` names an environment variable that must be present in the Bridge service process. The bridge sends both values on new routing threads, new project threads, and resumed threads, without changing the global Codex model selection.
+To select a model or reasoning effort only for IM traffic, set `codex.model`, `codex.model_provider`, and optionally `codex.reasoning_effort` in `~/.codex-bridge/bridge.toml`. The supported reasoning efforts are `none`, `minimal`, `low`, `medium`, `high`, and `xhigh`. Define the provider in `~/.codex/config.toml`; its `env_key` names an environment variable that must be present in the Bridge service process. The bridge applies the model and reasoning effort to IM turns without changing the global Codex model selection.
 
 Set `codex.operator_guardrail` to the operator-maintained safety policy for IM requests. The bridge places it at the beginning of App Server `developerInstructions` for both new and resumed tasks while keeping the colleague's message unmodified. Keep destructive-operation rules here rather than in the project catalog or group message.
 
