@@ -79,6 +79,7 @@ pub struct CodexAppServer {
     server_requests: Arc<Mutex<Option<mpsc::UnboundedReceiver<ServerRequest>>>>,
     model: Option<String>,
     model_provider: Option<String>,
+    reasoning_effort: Option<String>,
     _child: Arc<Mutex<Child>>,
 }
 
@@ -99,6 +100,23 @@ impl CodexAppServer {
         binary: &str,
         model: Option<String>,
         model_provider: Option<String>,
+        environment: &[(OsString, OsString)],
+    ) -> Result<Self, AppServerError> {
+        Self::spawn_with_model_and_reasoning_and_environment(
+            binary,
+            model,
+            model_provider,
+            None,
+            environment,
+        )
+        .await
+    }
+
+    pub async fn spawn_with_model_and_reasoning_and_environment(
+        binary: &str,
+        model: Option<String>,
+        model_provider: Option<String>,
+        reasoning_effort: Option<String>,
         environment: &[(OsString, OsString)],
     ) -> Result<Self, AppServerError> {
         let mut command = app_server_command(binary, environment);
@@ -136,6 +154,7 @@ impl CodexAppServer {
             server_requests: Arc::new(Mutex::new(Some(server_requests_rx))),
             model,
             model_provider,
+            reasoning_effort,
             _child: Arc::new(Mutex::new(child)),
         };
         client.initialize().await?;
@@ -242,6 +261,7 @@ impl CodexAppServer {
                     application_context,
                     image_paths,
                     self.model.as_deref(),
+                    self.reasoning_effort.as_deref(),
                 ),
             )
             .await?;
@@ -427,6 +447,7 @@ fn turn_params(
     application_context: &str,
     image_paths: &[String],
     model: Option<&str>,
+    reasoning_effort: Option<&str>,
 ) -> Value {
     let mut params = json!({
         "threadId": thread_id,
@@ -443,6 +464,12 @@ fn turn_params(
             .as_object_mut()
             .expect("turn parameters are always a JSON object")
             .insert("model".into(), Value::String(model.into()));
+    }
+    if let Some(reasoning_effort) = reasoning_effort {
+        params
+            .as_object_mut()
+            .expect("turn parameters are always a JSON object")
+            .insert("effort".into(), Value::String(reasoning_effort.into()));
     }
     params
 }
@@ -1347,10 +1374,12 @@ mod tests {
             "application context",
             &[],
             Some("gpt-5.5"),
+            Some("high"),
         );
 
         assert_eq!(params["threadId"], "thread-1");
         assert_eq!(params["model"], "gpt-5.5");
+        assert_eq!(params["effort"], "high");
         assert_eq!(
             params["additionalContext"]["im_bridge"]["value"],
             "application context"

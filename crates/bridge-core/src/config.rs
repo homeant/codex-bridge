@@ -35,6 +35,10 @@ pub enum ConfigError {
     EmptyAdapterName,
     #[error("duplicate adapter name: {0}")]
     DuplicateAdapterName(String),
+    #[error(
+        "invalid codex.reasoning_effort {value:?}; supported values: none, minimal, low, medium, high, xhigh"
+    )]
+    InvalidReasoningEffort { value: String },
     #[error("project {id} path must be inside codex.allowed_roots: {path}")]
     UnsafeProjectPath { id: String, path: PathBuf },
 }
@@ -57,6 +61,8 @@ pub struct CodexConfig {
     pub model: Option<String>,
     #[serde(default)]
     pub model_provider: Option<String>,
+    #[serde(default, alias = "model_reasoning_effort")]
+    pub reasoning_effort: Option<String>,
     pub cwd: PathBuf,
     pub allowed_roots: Vec<PathBuf>,
     #[serde(default)]
@@ -108,6 +114,10 @@ pub struct AdapterConfig {
 fn default_codex_binary() -> String {
     "codex".into()
 }
+
+const SUPPORTED_REASONING_EFFORTS: [&str; 6] =
+    ["none", "minimal", "low", "medium", "high", "xhigh"];
+
 fn enabled() -> bool {
     true
 }
@@ -140,6 +150,14 @@ impl BridgeConfig {
         }
         self.codex.model = normalized_optional(self.codex.model.take());
         self.codex.model_provider = normalized_optional(self.codex.model_provider.take());
+        self.codex.reasoning_effort = normalized_optional(self.codex.reasoning_effort.take());
+        if let Some(value) = &self.codex.reasoning_effort
+            && !SUPPORTED_REASONING_EFFORTS.contains(&value.as_str())
+        {
+            return Err(ConfigError::InvalidReasoningEffort {
+                value: value.clone(),
+            });
+        }
         let mut adapter_names = HashSet::with_capacity(self.adapters.len());
         for adapter in &mut self.adapters {
             adapter.name = adapter.name.trim().to_owned();
@@ -247,6 +265,7 @@ mod tests {
                 binary: "codex".into(),
                 model: None,
                 model_provider: None,
+                reasoning_effort: Some(" high ".into()),
                 cwd: root.path().to_owned(),
                 allowed_roots: vec![root.path().to_owned()],
                 operator_guardrail: String::new(),
@@ -273,11 +292,44 @@ mod tests {
 
         config.resolve_paths(&config_dir).unwrap();
 
+        assert_eq!(config.codex.reasoning_effort.as_deref(), Some("high"));
         assert_eq!(config.state.sqlite_path, config_dir.join("bridge.sqlite3"));
         assert_eq!(
             config.adapters[0].cwd.as_deref(),
             Some(adapter_cwd.canonicalize().unwrap().as_path())
         );
+    }
+
+    #[test]
+    fn rejects_unsupported_reasoning_effort() {
+        let root = tempfile::tempdir().unwrap();
+        let mut config = BridgeConfig {
+            codex: CodexConfig {
+                binary: "codex".into(),
+                model: None,
+                model_provider: None,
+                reasoning_effort: Some("max".into()),
+                cwd: root.path().to_owned(),
+                allowed_roots: vec![root.path().to_owned()],
+                operator_guardrail: String::new(),
+                project_router_prompt: "Select the matching project.".into(),
+            },
+            state: StateConfig {
+                sqlite_path: root.path().join("bridge.sqlite3"),
+            },
+            projects: vec![ProjectConfig {
+                id: "bridge".into(),
+                name: "Bridge".into(),
+                description: "IM bridge".into(),
+                path: root.path().to_owned(),
+            }],
+            adapters: vec![],
+        };
+
+        assert!(matches!(
+            config.resolve_paths(root.path()),
+            Err(ConfigError::InvalidReasoningEffort { value }) if value == "max"
+        ));
     }
 
     #[test]
@@ -288,6 +340,7 @@ mod tests {
                 binary: "codex".into(),
                 model: None,
                 model_provider: None,
+                reasoning_effort: None,
                 cwd: root.path().to_owned(),
                 allowed_roots: vec![root.path().to_owned()],
                 operator_guardrail: String::new(),
@@ -326,6 +379,7 @@ mod tests {
                 binary: "codex".into(),
                 model: None,
                 model_provider: None,
+                reasoning_effort: None,
                 cwd: PathBuf::from("/workspace"),
                 allowed_roots: vec![PathBuf::from("/workspace")],
                 operator_guardrail: String::new(),
