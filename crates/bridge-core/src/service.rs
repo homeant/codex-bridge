@@ -2100,6 +2100,7 @@ mod tests {
                 binary: "codex".into(),
                 model: None,
                 model_provider: None,
+                reasoning_effort: None,
                 cwd: PathBuf::from("/workspace"),
                 allowed_roots: vec![PathBuf::from("/workspace")],
                 operator_guardrail: operator_guardrail.into(),
