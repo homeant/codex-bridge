@@ -57,13 +57,19 @@ async fn main() -> Result<()> {
             .model_provider
             .as_deref()
             .unwrap_or("<default>"),
-        "Codex model selection configured"
+        reasoning_effort = config
+            .codex
+            .reasoning_effort
+            .as_deref()
+            .unwrap_or("<default>"),
+        "Codex model and reasoning selection configured"
     );
     let codex_environment = shell_env::codex_environment().await;
-    let codex = CodexAppServer::spawn_with_model_and_environment(
+    let codex = CodexAppServer::spawn_with_model_and_reasoning_and_environment(
         &config.codex.binary,
         config.codex.model.clone(),
         config.codex.model_provider.clone(),
+        config.codex.reasoning_effort.clone(),
         &codex_environment,
     )
     .await?;

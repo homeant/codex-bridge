@@ -3,7 +3,9 @@ members = [
   "crates/bridge-core",
   "crates/bridge-daemon",
   "crates/channel-protocol",
+  "crates/control-plane",
   "crates/codex-app-server-client",
+  "crates/runtime-connector-protocol",
 ]
 resolver = "2"
 
